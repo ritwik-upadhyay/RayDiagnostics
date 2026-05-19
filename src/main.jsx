@@ -27,11 +27,13 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const metrics = [
-  { label: 'Noise Reduction', value: '72%', icon: SlidersHorizontal },
-  { label: 'Scan Confidence', value: '94%', icon: ShieldCheck },
-  { label: 'Reconstruction Score', value: '0.91', icon: Gauge }
-];
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001';
+
+const defaultMetricValues = {
+  noiseReduction: '72%',
+  scanConfidence: '94%',
+  reconstructionScore: '0.91'
+};
 
 const impact = [
   {
@@ -56,29 +58,51 @@ const impact = [
   }
 ];
 
-const scanData = [
+const defaultScanData = [
   { label: 'Lung window', value: 88 },
   { label: 'Edge preservation', value: 81 },
   { label: 'Artifact control', value: 76 },
   { label: 'Soft tissue clarity', value: 84 }
 ];
 
+function metricCards(metricValues) {
+  return [
+    { label: 'Noise Reduction', value: metricValues.noiseReduction, icon: SlidersHorizontal },
+    { label: 'Scan Confidence', value: metricValues.scanConfidence, icon: ShieldCheck },
+    { label: 'Reconstruction Score', value: metricValues.reconstructionScore, icon: Gauge }
+  ];
+}
+
 function App() {
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [backendReady, setBackendReady] = useState(false);
+  const [selectedFileName, setSelectedFileName] = useState('');
   const workstationRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
-    if (!processing) return;
-    setProgress(0);
+    const checkBackend = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/health`);
+        if (!response.ok) throw new Error('Backend unavailable');
+        setBackendReady(true);
+      } catch (error) {
+        setBackendReady(false);
+      }
+    };
+
+    checkBackend();
+  }, []);
+
+  useEffect(() => {
+    if (!processing) return undefined;
     const interval = window.setInterval(() => {
       setProgress((current) => {
-        if (current >= 100) {
-          window.clearInterval(interval);
-          window.setTimeout(() => setProcessing(false), 500);
-          return 100;
-        }
-        return Math.min(current + Math.floor(Math.random() * 9) + 5, 100);
+        if (current >= 92) return current;
+        return Math.min(current + Math.floor(Math.random() * 6) + 4, 92);
       });
     }, 180);
 
@@ -89,18 +113,85 @@ function App() {
     workstationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const triggerUpload = () => {
+    setErrorMessage('');
+    scrollToWorkstation();
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setSelectedFileName(file.name);
+    setErrorMessage('');
+    setProcessing(true);
+    setProgress(8);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/reconstruct`, {
+        method: 'POST',
+        body: formData
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail ?? 'Reconstruction failed.');
+      }
+
+      setResult(payload);
+      setBackendReady(true);
+      setProgress(100);
+      window.setTimeout(() => setProcessing(false), 320);
+    } catch (error) {
+      setProcessing(false);
+      setProgress(0);
+      setBackendReady(false);
+      setErrorMessage(error.message ?? 'Unable to reconstruct the scan.');
+    }
+  };
+
+  const activeMetrics = metricCards(result?.metrics ?? defaultMetricValues);
+  const activeScanData = result?.scanData ?? defaultScanData;
+
   return (
     <main className="app-shell">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".dcm,.dicom,image/png,image/jpeg,image/webp,image/bmp,.png,.jpg,.jpeg,.webp,.bmp"
+        className="sr-only-input"
+        onChange={handleFileChange}
+      />
       <RadiologyBackground />
       <Navigation onDemo={scrollToWorkstation} />
-      <Hero onUpload={() => setProcessing(true)} onDemo={scrollToWorkstation} />
+      <Hero
+        backendReady={backendReady}
+        onUpload={triggerUpload}
+        onDemo={scrollToWorkstation}
+        selectedFileName={selectedFileName}
+        summary={result?.summary}
+        result={result}
+        metrics={activeMetrics}
+      />
       <section ref={workstationRef} className="section workstation-section" id="workstation">
         <SectionHeader
           eyebrow="AI Reconstruction Demo"
           title="A diagnostic console for low-dose CT clarity."
           copy="Simulate the full reconstruction path from noisy acquisition to enhanced clinical output with live quality indicators."
         />
-        <Workstation processing={processing} progress={progress} onProcess={() => setProcessing(true)} />
+        <Workstation
+          processing={processing}
+          progress={progress}
+          onProcess={triggerUpload}
+          result={result}
+          errorMessage={errorMessage}
+          selectedFileName={selectedFileName}
+          scanData={activeScanData}
+        />
       </section>
       <RadiationTradeoff />
       <GanFlow />
@@ -130,7 +221,7 @@ function Navigation({ onDemo }) {
   );
 }
 
-function Hero({ onUpload, onDemo }) {
+function Hero({ backendReady, onUpload, onDemo, selectedFileName, summary, result, metrics }) {
   return (
     <section className="hero" id="top">
       <div className="hero-copy">
@@ -141,7 +232,7 @@ function Hero({ onUpload, onDemo }) {
           transition={{ duration: 0.6 }}
         >
           <span className="live-dot" />
-          Low-dose CT reconstruction engine online
+          {backendReady ? 'Low-dose CT reconstruction engine online' : 'Backend connection warming up'}
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: 22 }}
@@ -160,6 +251,16 @@ function Hero({ onUpload, onDemo }) {
           Enhancing diagnostic clarity while reducing radiation exposure through a cinematic,
           radiologist-ready reconstruction interface.
         </motion.p>
+        {(selectedFileName || summary) && (
+          <motion.p
+            className="hero-subtitle hero-status"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            {summary ?? `Ready with ${selectedFileName}`}
+          </motion.p>
+        )}
         <motion.div
           className="hero-actions"
           initial={{ opacity: 0, y: 20 }}
@@ -182,13 +283,13 @@ function Hero({ onUpload, onDemo }) {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.8, delay: 0.12 }}
       >
-        <ComparisonScanner />
+        <ComparisonScanner result={result} metrics={metrics} />
       </motion.div>
     </section>
   );
 }
 
-function ComparisonScanner() {
+function ComparisonScanner({ result, metrics }) {
   const [position, setPosition] = useState(56);
 
   return (
@@ -201,9 +302,9 @@ function ComparisonScanner() {
         <div className="scanner-chip">Live Preview</div>
       </div>
       <div className="comparison-frame">
-        <CtSlice variant="low" />
+        <CtSlice variant="low" imageSrc={result?.lowDoseImage ?? result?.sourcePreviewImage} altText="Low dose CT preview" />
         <div className="enhanced-layer" style={{ clipPath: `inset(0 0 0 ${position}%)` }}>
-          <CtSlice variant="enhanced" />
+          <CtSlice variant="enhanced" imageSrc={result?.enhancedImage} altText="Enhanced CT preview" />
         </div>
         <div className="comparison-line" style={{ left: `${position}%` }}>
           <span />
@@ -233,27 +334,40 @@ function ComparisonScanner() {
   );
 }
 
-function CtSlice({ variant = 'low' }) {
+function CtSlice({ variant = 'low', imageSrc, altText }) {
   const enhanced = variant === 'enhanced';
+  const isRealImage = Boolean(imageSrc);
   return (
-    <div className={`ct-slice ${enhanced ? 'ct-enhanced' : 'ct-low'}`}>
-      <div className="ct-ring ring-one" />
-      <div className="ct-ring ring-two" />
-      <div className="ct-ring ring-three" />
-      <div className="ct-spine" />
-      <div className="ct-lesion lesion-one" />
-      <div className="ct-lesion lesion-two" />
-      <div className="ct-grid" />
-      <div className="scanline" />
+    <div className={`ct-slice ${enhanced ? 'ct-enhanced' : 'ct-low'} ${imageSrc ? 'ct-image-frame' : ''}`}>
+      {imageSrc ? (
+        <img className="ct-image" src={imageSrc} alt={altText} />
+      ) : (
+        <>
+          <div className="ct-ring ring-one" />
+          <div className="ct-ring ring-two" />
+          <div className="ct-ring ring-three" />
+          <div className="ct-spine" />
+          <div className="ct-lesion lesion-one" />
+          <div className="ct-lesion lesion-two" />
+        </>
+      )}
+      {!isRealImage && <div className="ct-grid" />}
+      {!isRealImage && <div className="scanline" />}
     </div>
   );
 }
 
-function Workstation({ processing, progress, onProcess }) {
+function Workstation({ processing, progress, onProcess, result, errorMessage, selectedFileName, scanData }) {
   return (
     <div className="workstation">
       <div className="viewport-strip">
-        <ScanPanel title="Low Dose Scan" label="Noisy acquisition" icon={Radiation} tone="low" />
+        <ScanPanel
+          title="Low Dose Scan"
+          label={selectedFileName ? 'Uploaded acquisition' : 'Noisy acquisition'}
+          icon={Radiation}
+          tone="low"
+          imageSrc={result?.lowDoseImage ?? result?.sourcePreviewImage}
+        />
         <div className="process-column">
           <div className="pulse-core">
             <BrainCircuit size={34} />
@@ -265,11 +379,23 @@ function Workstation({ processing, progress, onProcess }) {
             Reconstruct
           </button>
         </div>
-        <ScanPanel title="AI Reconstruction" label="Denoised anatomy" icon={Sparkles} tone="ai" />
+        <ScanPanel
+          title="AI Reconstruction"
+          label={processing ? 'Inference active' : 'Denoised anatomy'}
+          icon={Sparkles}
+          tone="ai"
+          imageSrc={result?.enhancedImage}
+        />
         <div className="process-column desktop-only">
           <ArrowRight size={26} />
         </div>
-        <ScanPanel title="Enhanced Output" label="Clinical clarity" icon={ShieldCheck} tone="enhanced" />
+        <ScanPanel
+          title="Enhanced Output"
+          label={result ? 'Clinical clarity' : 'Awaiting upload'}
+          icon={ShieldCheck}
+          tone="enhanced"
+          imageSrc={result?.enhancedImage}
+        />
       </div>
       <div className="analysis-grid">
         <div className="glass-panel upload-panel">
@@ -279,8 +405,12 @@ function Workstation({ processing, progress, onProcess }) {
           </div>
           <div className={`drop-zone ${processing ? 'is-processing' : ''}`} onClick={onProcess}>
             <ScanLine size={34} />
-            <strong>{processing ? 'Reconstructing anatomy...' : 'Drop DICOM / CT slice'}</strong>
-            <span>{processing ? `${progress}% complete` : 'Click to simulate reconstruction'}</span>
+            <strong>{processing ? 'Reconstructing anatomy...' : selectedFileName || 'Drop DICOM / CT slice'}</strong>
+            <span>
+              {processing
+                ? `${progress}% complete`
+                : errorMessage || result?.summary || 'Click to upload and reconstruct'}
+            </span>
             <div className="progress-track">
               <div style={{ width: `${processing ? progress : 18}%` }} />
             </div>
@@ -309,10 +439,16 @@ function Workstation({ processing, progress, onProcess }) {
             Difference Heatmap
           </div>
           <div className="heatmap">
-            <span className="heat a" />
-            <span className="heat b" />
-            <span className="heat c" />
-            <CtSlice variant="enhanced" />
+            {result?.heatmapImage ? (
+              <CtSlice variant="enhanced" imageSrc={result.heatmapImage} altText="Difference heatmap" />
+            ) : (
+              <>
+                <span className="heat a" />
+                <span className="heat b" />
+                <span className="heat c" />
+                <CtSlice variant="enhanced" />
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -320,7 +456,7 @@ function Workstation({ processing, progress, onProcess }) {
   );
 }
 
-function ScanPanel({ title, label, icon: Icon, tone }) {
+function ScanPanel({ title, label, icon: Icon, tone, imageSrc }) {
   return (
     <article className={`scan-panel ${tone}`}>
       <div className="scan-panel-head">
@@ -331,7 +467,7 @@ function ScanPanel({ title, label, icon: Icon, tone }) {
         <strong>{label}</strong>
       </div>
       <div className="mini-scan">
-        <CtSlice variant={tone === 'low' ? 'low' : 'enhanced'} />
+        <CtSlice variant={tone === 'low' ? 'low' : 'enhanced'} imageSrc={imageSrc} altText={title} />
       </div>
     </article>
   );

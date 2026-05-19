@@ -37,6 +37,18 @@ body {
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.sr-only-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 button,
 input {
   font: inherit;
@@ -290,6 +302,11 @@ h1 span {
   line-height: 1.7;
 }
 
+.hero-status {
+  max-width: 560px;
+  color: var(--ice);
+}
+
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
@@ -436,6 +453,28 @@ h1 span {
     radial-gradient(ellipse at 42% 45%, rgba(185, 215, 234, 0.32) 0 13%, transparent 14%),
     radial-gradient(ellipse at 59% 46%, rgba(185, 215, 234, 0.28) 0 13%, transparent 14%),
     radial-gradient(circle at 50% 50%, rgba(143, 211, 255, 0.1), rgba(7, 17, 31, 0.96) 68%);
+}
+
+.ct-image-frame {
+  background: #020710;
+}
+
+.ct-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.ct-image-frame::after {
+  display: none;
+}
+
+.ct-image-frame.ct-low,
+.ct-image-frame.ct-enhanced {
+  filter: none;
 }
 
 .ct-low {
